@@ -10,14 +10,18 @@ import (
 var Version = "dev" // Overridden by ldflags during build
 
 type Config struct {
-	BackendURL        string `yaml:"backend_url"`
-	APIKey            string `yaml:"api_key"`
-	AgentID           string `yaml:"agent_id,omitempty"`
-	HeartbeatInterval int    `yaml:"heartbeat_interval"` // in seconds
-	AssetPushInterval int      `yaml:"asset_push_interval"` // in seconds
-	VulnScanInterval  int      `yaml:"vuln_scan_interval"` // in seconds
-	IncludeDirs       []string `yaml:"include_dirs,omitempty"`
-	ExcludeDirs       []string `yaml:"exclude_dirs,omitempty"`
+	BackendURL           string   `yaml:"backend_url"`
+	APIKey               string   `yaml:"api_key"`
+	AgentID              string   `yaml:"agent_id,omitempty"`
+	HeartbeatInterval    int      `yaml:"heartbeat_interval"` // in seconds
+	AssetPushInterval    int      `yaml:"asset_push_interval"` // in seconds
+	VulnScanInterval     int      `yaml:"vuln_scan_interval"` // in seconds
+	IncludeDirs          []string `yaml:"include_dirs,omitempty"`
+	ExcludeDirs          []string `yaml:"exclude_dirs,omitempty"`
+	ActiveIngestion      bool     `yaml:"active_ingestion"`
+	CollectionCategories []string `yaml:"collection_categories,omitempty"`
+	CollectionInterval   string   `yaml:"collection_interval,omitempty"`
+	CollectOnStart       bool     `yaml:"collect_on_start"`
 }
 
 func GetDefaultConfigPath() string {
@@ -33,7 +37,11 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
-	var cfg Config
+	cfg := Config{
+		ActiveIngestion:    true,
+		CollectOnStart:     true,
+		CollectionInterval: "30m",
+	}
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}

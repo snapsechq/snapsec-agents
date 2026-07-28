@@ -86,17 +86,21 @@ func (c *Client) Heartbeat(agentID, version string) (*ResultsResponse, error) {
 }
 
 type AgentConfiguration struct {
-	Kill              bool                   `json:"kill"`
-	HeartbeatInterval int                    `json:"heartbeat_interval"` // in seconds
-	AssetPushInterval int                    `json:"asset_push_interval"` // in seconds
-	VulnScanInterval  int                    `json:"vuln_scan_interval,omitempty"` // in seconds
-	ScanJobs          []interface{}          `json:"scan_jobs,omitempty"`
-	LatestVersion     string                 `json:"latest_version"`
-	DownloadURL       string                 `json:"download_url"`
-	ScanTargets       struct {
+	Kill                 bool                   `json:"kill"`
+	HeartbeatInterval    int                    `json:"heartbeat_interval"` // in seconds
+	AssetPushInterval    int                    `json:"asset_push_interval"` // in seconds
+	VulnScanInterval     int                    `json:"vuln_scan_interval,omitempty"` // in seconds
+	ScanJobs             []interface{}          `json:"scan_jobs,omitempty"`
+	LatestVersion        string                 `json:"latest_version"`
+	DownloadURL          string                 `json:"download_url"`
+	ScanTargets          struct {
 		IncludeDirs []string `json:"includeDirs"`
 		ExcludeDirs []string `json:"excludeDirs"`
 	} `json:"scan_targets,omitempty"`
+	ActiveIngestion      bool                   `json:"active_ingestion"`
+	CollectionCategories []string               `json:"collection_categories"`
+	CollectionInterval   string                 `json:"collection_interval"`
+	CollectOnStart       bool                   `json:"collect_on_start"`
 }
 
 type ResultsResponse struct {

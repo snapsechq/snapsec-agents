@@ -190,22 +190,25 @@ func (a *Agent) Start() error {
 	}
 
 	// 4. Initial Asset Push
-	// Send immediate asset results so we don't wait for the first scheduled asset push ticker.
-	log.Println("Gathering and sending initial asset results...")
-	if payload, err := a.gatherAll(); err == nil {
-		if resp, err := a.api.SendResults(a.cfg.AgentID, payload); err != nil {
-			log.Printf("Failed to send initial results: %v", err)
+	if a.cfg.ActiveIngestion && a.cfg.CollectOnStart {
+		log.Println("Gathering and sending initial asset results...")
+		if payload, err := a.gatherAll(); err == nil {
+			if resp, err := a.api.SendResults(a.cfg.AgentID, payload); err != nil {
+				log.Printf("Failed to send initial results: %v", err)
+			} else {
+				if a.checkKill(resp) {
+					return nil
+				}
+				if a.syncConfiguration(resp) {
+					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
+					assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+				}
+			}
 		} else {
-			if a.checkKill(resp) {
-				return nil
-			}
-			if a.syncConfiguration(resp) {
-				hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-				assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
-			}
+			log.Printf("Failed to gather initial results: %v", err)
 		}
 	} else {
-		log.Printf("Failed to gather initial results: %v", err)
+		log.Println("Skipping initial asset push (CollectOnStart is false or ActiveIngestion is false).")
 	}
 
 	for {
@@ -227,6 +230,10 @@ func (a *Agent) Start() error {
 			}
 
 		case <-assetTicker.C:
+			if !a.cfg.ActiveIngestion {
+				log.Println("Active ingestion is disabled. Skipping asset push.")
+				continue
+			}
 			// Gather and Send Results
 			results, err := a.gatherAll()
 			if err != nil {
@@ -278,6 +285,24 @@ func (a *Agent) syncConfiguration(resp *api.ResultsResponse) bool {
 		a.cfg.VulnScanInterval = resp.Configuration.VulnScanInterval
 		a.scanManager.SetScanInterval(a.cfg.VulnScanInterval)
 		changed = true
+	}
+	if resp.Configuration.ActiveIngestion != a.cfg.ActiveIngestion {
+		a.cfg.ActiveIngestion = resp.Configuration.ActiveIngestion
+		changed = true
+	}
+	if resp.Configuration.CollectionInterval != "" && resp.Configuration.CollectionInterval != a.cfg.CollectionInterval {
+		a.cfg.CollectionInterval = resp.Configuration.CollectionInterval
+		changed = true
+	}
+	if resp.Configuration.CollectOnStart != a.cfg.CollectOnStart {
+		a.cfg.CollectOnStart = resp.Configuration.CollectOnStart
+		changed = true
+	}
+	if resp.Configuration.CollectionCategories != nil {
+		if !stringSlicesEqual(a.cfg.CollectionCategories, resp.Configuration.CollectionCategories) {
+			a.cfg.CollectionCategories = resp.Configuration.CollectionCategories
+			changed = true
+		}
 	}
 
 	// Update Scan Targets if they differ
@@ -364,6 +389,9 @@ func (a *Agent) gatherAll() (map[string]interface{}, error) {
 	}
 
 	for _, m := range a.modules {
+		if !isModuleEnabled(m.Name(), a.cfg.CollectionCategories) {
+			continue
+		}
 		data, err := m.Gather()
 		if err != nil {
 			log.Printf("Module %s failed: %v", m.Name(), err)
@@ -396,4 +424,35 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func isModuleEnabled(moduleName string, categories []string) bool {
+	if len(categories) == 0 {
+		return true
+	}
+
+	var category string
+	switch moduleName {
+	case "packages":
+		category = "installed_packages"
+	case "processes":
+		category = "running_processes"
+	case "hardware", "devices":
+		category = "host_hardware"
+	case "network":
+		category = "network"
+	case "users", "security":
+		category = "users_and_access"
+	case "host_os", "host":
+		return true
+	default:
+		return true
+	}
+
+	for _, cat := range categories {
+		if cat == category {
+			return true
+		}
+	}
+	return false
 }
