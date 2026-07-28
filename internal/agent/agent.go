@@ -23,17 +23,19 @@ import (
 	"snapsec-agent/internal/vulnscan"
 	"snapsec-agent/internal/vulnscan/nuclei"
 	"encoding/json"
+	"context"
 )
 
 type Agent struct {
-	cfg         *config.Config
-	configPath  string
-	api         *api.Client
-	modules     []modules.Module
-	stop          chan struct{}
-	scanManager   *vulnscan.ScanManager
-	KillHandler   func()
-	UpdateHandler func() error
+	cfg            *config.Config
+	configPath     string
+	api            *api.Client
+	modules        []modules.Module
+	stop           chan struct{}
+	scanManager    *vulnscan.ScanManager
+	KillHandler    func()
+	UpdateHandler  func() error
+	triggeredScans map[string]bool
 }
 
 func NewAgent(cfg *config.Config, configPath string) *Agent {
@@ -53,7 +55,8 @@ func NewAgent(cfg *config.Config, configPath string) *Agent {
 			&security.SecurityModule{},
 			&classification.ClassificationModule{},
 		},
-		stop: make(chan struct{}),
+		stop:           make(chan struct{}),
+		triggeredScans: make(map[string]bool),
 	}
 	
 	// Initialize VulnScanManager
@@ -334,6 +337,14 @@ func (a *Agent) syncConfiguration(resp *api.ResultsResponse) bool {
 		}
 	}
 
+	// Trigger scheduled scans if any are pending
+	for _, scan := range resp.Configuration.Scans {
+		if scan.Status == "pending" && !a.triggeredScans[scan.ScanID] {
+			a.triggeredScans[scan.ScanID] = true
+			go a.executeScheduledScan(scan)
+		}
+	}
+
 	if changed {
 		if err := config.SaveConfig(a.configPath, a.cfg); err != nil {
 			log.Printf("Failed to save updated configuration: %v", err)
@@ -455,4 +466,52 @@ func isModuleEnabled(moduleName string, categories []string) bool {
 		}
 	}
 	return false
+}
+
+func (a *Agent) executeScheduledScan(scan api.ScanJobConfig) {
+	log.Printf("Executing scheduled scan %s using tool %s", scan.ScanID, scan.Tool)
+	
+	plugin, ok := a.scanManager.GetPlugin(scan.Tool)
+	if !ok {
+		log.Printf("Tool %s not registered for scheduled scan %s", scan.Tool, scan.ScanID)
+		_, err := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, nil, scan.ScanID, "failed", fmt.Sprintf("Tool %s not registered", scan.Tool))
+		if err != nil {
+			log.Printf("Failed to report scan failure: %v", err)
+		}
+		return
+	}
+
+	targets := scan.Targets
+	if len(targets) == 0 {
+		if runtime.GOOS == "windows" {
+			targets = []string{"C:\\"}
+		} else {
+			targets = []string{"/"}
+		}
+	}
+
+	job := vulnscan.ScanJob{
+		ID:      scan.ScanID,
+		Tool:    scan.Tool,
+		Targets: targets,
+		Options: scan.Options,
+	}
+
+	ctx := context.Background()
+	result, err := plugin.Execute(ctx, job)
+	if err != nil {
+		log.Printf("Scheduled scan %s failed: %v", scan.ScanID, err)
+		_, rErr := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, nil, scan.ScanID, "failed", err.Error())
+		if rErr != nil {
+			log.Printf("Failed to report scan failure: %v", rErr)
+		}
+		return
+	}
+
+	log.Printf("Scheduled scan %s completed with %d findings", scan.ScanID, len(result.Findings))
+	
+	_, rErr := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, result.Findings, scan.ScanID, "completed", "")
+	if rErr != nil {
+		log.Printf("Failed to report scan completion: %v", rErr)
+	}
 }

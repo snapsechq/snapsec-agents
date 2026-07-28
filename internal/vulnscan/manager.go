@@ -37,6 +37,11 @@ func (m *ScanManager) RegisterPlugin(name string, plugin ScannerPlugin) error {
 	return nil
 }
 
+func (m *ScanManager) GetPlugin(name string) (ScannerPlugin, bool) {
+	plugin, ok := m.plugins[name]
+	return plugin, ok
+}
+
 func (m *ScanManager) UpdateTargets(includes []string, excludes []string) {
 	m.includes = includes
 	m.excludes = excludes

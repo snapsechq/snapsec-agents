@@ -85,6 +85,15 @@ func (c *Client) Heartbeat(agentID, version string) (*ResultsResponse, error) {
 	return &res, nil
 }
 
+type ScanJobConfig struct {
+	ScanID   string            `json:"scan_id"`
+	AgentID  string            `json:"agent_id"`
+	Status   string            `json:"status"`
+	Tool     string            `json:"tool"`
+	Targets  []string          `json:"targets"`
+	Options  map[string]string `json:"options"`
+}
+
 type AgentConfiguration struct {
 	Kill                 bool                   `json:"kill"`
 	HeartbeatInterval    int                    `json:"heartbeat_interval"` // in seconds
@@ -101,6 +110,7 @@ type AgentConfiguration struct {
 	CollectionCategories []string               `json:"collection_categories"`
 	CollectionInterval   string                 `json:"collection_interval"`
 	CollectOnStart       bool                   `json:"collect_on_start"`
+	Scans                []ScanJobConfig        `json:"scans"`
 }
 
 type ResultsResponse struct {
@@ -127,9 +137,20 @@ func (c *Client) SendResults(agentID string, results interface{}) (*ResultsRespo
 }
 
 func (c *Client) SendVulnerabilities(agentID string, findings interface{}) (*ResultsResponse, error) {
+	return c.SendVulnerabilitiesWithStatus(agentID, findings, "", "", "")
+}
+
+func (c *Client) SendVulnerabilitiesWithStatus(agentID string, findings interface{}, scanID string, status string, scanErr string) (*ResultsResponse, error) {
 	data := map[string]interface{}{
 		"agent_id": agentID,
 		"data":     findings,
+	}
+	if scanID != "" {
+		data["scan_id"] = scanID
+		data["status"] = status
+		if scanErr != "" {
+			data["error"] = scanErr
+		}
 	}
 
 	respBody, err := c.postWithResponse("/vulnerabilities", data)
