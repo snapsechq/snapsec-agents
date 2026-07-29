@@ -166,6 +166,29 @@ func (c *Client) SendVulnerabilitiesWithStatus(agentID string, findings interfac
 	return &res, nil
 }
 
+func (c *Client) UpdateScanStatus(agentID, scanID, status, scanErr string) (*ResultsResponse, error) {
+	data := map[string]interface{}{
+		"agent_id": agentID,
+		"scan_id":  scanID,
+		"status":   status,
+	}
+	if scanErr != "" {
+		data["error"] = scanErr
+	}
+
+	respBody, err := c.postWithResponse("/scan/status", data)
+	if err != nil {
+		return nil, err
+	}
+
+	var res ResultsResponse
+	if err := json.Unmarshal(respBody, &res); err != nil {
+		return nil, err
+	}
+
+	return &res, nil
+}
+
 func (c *Client) post(endpoint string, data interface{}) error {
 	_, err := c.postWithResponse(endpoint, data)
 	return err

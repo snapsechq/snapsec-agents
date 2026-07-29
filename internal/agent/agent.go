@@ -471,10 +471,14 @@ func isModuleEnabled(moduleName string, categories []string) bool {
 func (a *Agent) executeScheduledScan(scan api.ScanJobConfig) {
 	log.Printf("Executing scheduled scan %s using tool %s", scan.ScanID, scan.Tool)
 	
+	if _, err := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "launched", ""); err != nil {
+		log.Printf("Failed to report scan status as launched: %v", err)
+	}
+
 	plugin, ok := a.scanManager.GetPlugin(scan.Tool)
 	if !ok {
 		log.Printf("Tool %s not registered for scheduled scan %s", scan.Tool, scan.ScanID)
-		_, err := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, nil, scan.ScanID, "failed", fmt.Sprintf("Tool %s not registered", scan.Tool))
+		_, err := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "failed", fmt.Sprintf("Tool %s not registered", scan.Tool))
 		if err != nil {
 			log.Printf("Failed to report scan failure: %v", err)
 		}
@@ -501,7 +505,7 @@ func (a *Agent) executeScheduledScan(scan api.ScanJobConfig) {
 	result, err := plugin.Execute(ctx, job)
 	if err != nil {
 		log.Printf("Scheduled scan %s failed: %v", scan.ScanID, err)
-		_, rErr := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, nil, scan.ScanID, "failed", err.Error())
+		_, rErr := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "failed", err.Error())
 		if rErr != nil {
 			log.Printf("Failed to report scan failure: %v", rErr)
 		}
@@ -510,7 +514,13 @@ func (a *Agent) executeScheduledScan(scan api.ScanJobConfig) {
 
 	log.Printf("Scheduled scan %s completed with %d findings", scan.ScanID, len(result.Findings))
 	
-	_, rErr := a.api.SendVulnerabilitiesWithStatus(a.cfg.AgentID, result.Findings, scan.ScanID, "completed", "")
+	if len(result.Findings) > 0 {
+		if _, sErr := a.api.SendVulnerabilities(a.cfg.AgentID, result.Findings); sErr != nil {
+			log.Printf("Failed to send vulnerabilities: %v", sErr)
+		}
+	}
+
+	_, rErr := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "completed", "")
 	if rErr != nil {
 		log.Printf("Failed to report scan completion: %v", rErr)
 	}
