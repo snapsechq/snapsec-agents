@@ -20,29 +20,20 @@ import (
 	"time"
 	"runtime"
 	"snapsec-agent/internal/updater"
-	"snapsec-agent/internal/vulnscan"
-	"snapsec-agent/internal/vulnscan/nuclei"
-	"snapsec-agent/internal/vulnscan/trivy"
-	"encoding/json"
-	"context"
-	"sync"
-	"strings"
 )
 
 type Agent struct {
-	cfg            *config.Config
-	configPath     string
-	api            *api.Client
-	modules        []modules.Module
-	stop           chan struct{}
-	scanManager    *vulnscan.ScanManager
-	KillHandler    func()
-	UpdateHandler  func() error
-	triggeredScans map[string]bool
+	cfg         *config.Config
+	configPath  string
+	api         *api.Client
+	modules     []modules.Module
+	stop        chan struct{}
+	KillHandler func()
+	UpdateHandler func() error
 }
 
 func NewAgent(cfg *config.Config, configPath string) *Agent {
-	agent := &Agent{
+	return &Agent{
 		cfg:        cfg,
 		configPath: configPath,
 		api:        api.NewClient(cfg.BackendURL, cfg.APIKey),
@@ -58,37 +49,8 @@ func NewAgent(cfg *config.Config, configPath string) *Agent {
 			&security.SecurityModule{},
 			&classification.ClassificationModule{},
 		},
-		stop:           make(chan struct{}),
-		triggeredScans: make(map[string]bool),
+		stop: make(chan struct{}),
 	}
-	
-	// Initialize VulnScanManager
-	pluginCfg := vulnscan.PluginConfig{
-		BinDir:      "./bin",
-		TemplateDir: "./templates",
-	}
-	
-	agent.scanManager = vulnscan.NewScanManager(pluginCfg, func(findings []vulnscan.NormalizedFinding) {
-		if len(findings) > 0 {
-			if _, err := agent.api.SendVulnerabilities(agent.cfg.AgentID, findings); err != nil {
-				log.Printf("Failed to send vulnerabilities: %v", err)
-			}
-		}
-	})
-	
-	// Register Nuclei
-	if err := agent.scanManager.RegisterPlugin("nuclei", &nuclei.NucleiScanner{}); err != nil {
-		log.Printf("Failed to initialize nuclei plugin: %v", err)
-	}
-
-	// Register Trivy
-	if err := agent.scanManager.RegisterPlugin("trivy", &trivy.TrivyScanner{}); err != nil {
-		log.Printf("Failed to initialize trivy plugin: %v", err)
-	}
-	
-	agent.scanManager.SetScanInterval(cfg.VulnScanInterval)
-	agent.scanManager.UpdateTargets(cfg.IncludeDirs, cfg.ExcludeDirs)
-	return agent
 }
 
 func (a *Agent) RegisterOnly() error {
@@ -178,131 +140,82 @@ func (a *Agent) Start() error {
 		}
 	}
 
-	a.scanManager.Start()
-
 	// 2. Start Heartbeat and Results Reporting Loops
 	hbTicker := time.NewTicker(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-	assetTicker := time.NewTicker(parseCollectionInterval(a.cfg.CollectionInterval))
+	assetTicker := time.NewTicker(time.Duration(a.cfg.AssetPushInterval) * time.Second)
 	defer hbTicker.Stop()
 	defer assetTicker.Stop()
 
-	log.Printf("Heartbeat interval: %ds, Collection interval: %s", a.cfg.HeartbeatInterval, a.cfg.CollectionInterval)
+	log.Printf("Heartbeat interval: %ds, Asset push interval: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
 
 	// 3. Initial Heartbeat to sync config and check for updates immediately
-	if a.cfg.Debug {
-		log.Println("[Debug] Sending initial heartbeat to backend...")
-	}
 	if resp, err := a.api.Heartbeat(a.cfg.AgentID, config.Version); err == nil {
-		log.Println("Initial heartbeat sent successfully")
-		if a.cfg.Debug {
-			respJSON, _ := json.Marshal(resp)
-			log.Printf("[Debug] Initial heartbeat response received: %s", string(respJSON))
-		}
 		if a.checkKill(resp) {
 			return nil
 		}
 		if a.syncConfiguration(resp) {
 			// Intervals might have changed, restart tickers
 			hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-			assetTicker.Reset(parseCollectionInterval(a.cfg.CollectionInterval))
+			assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
 		}
-	} else {
-		log.Printf("Initial heartbeat failed: %v", err)
 	}
 
 	// 4. Initial Asset Push
-	if a.cfg.ActiveIngestion && a.cfg.CollectOnStart {
-		log.Println("Gathering and sending initial asset results...")
-		if a.cfg.Debug {
-			log.Println("[Debug] Gathering all assets for initial push...")
-		}
-		if payload, err := a.gatherAll(); err == nil {
-			if a.cfg.Debug {
-				log.Println("[Debug] Sending initial asset results to backend...")
-			}
-			if resp, err := a.api.SendResults(a.cfg.AgentID, payload); err != nil {
-				log.Printf("Failed to send initial results: %v", err)
-			} else {
-				log.Println("Initial asset results sent successfully")
-				if a.cfg.Debug {
-					respJSON, _ := json.Marshal(resp)
-					log.Printf("[Debug] Initial asset results response received: %s", string(respJSON))
-				}
-				if a.checkKill(resp) {
-					return nil
-				}
-				if a.syncConfiguration(resp) {
-					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-					assetTicker.Reset(parseCollectionInterval(a.cfg.CollectionInterval))
-				}
-			}
+	// Send immediate asset results so we don't wait for the first scheduled asset push ticker.
+	log.Println("Gathering and sending initial asset results...")
+	if payload, err := a.gatherAll(); err == nil {
+		if resp, err := a.api.SendResults(a.cfg.AgentID, payload); err != nil {
+			log.Printf("Failed to send initial results: %v", err)
 		} else {
-			log.Printf("Failed to gather initial results: %v", err)
+			if a.checkKill(resp) {
+				return nil
+			}
+			if a.syncConfiguration(resp) {
+				hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
+				assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+			}
 		}
 	} else {
-		log.Println("Skipping initial asset push (CollectOnStart is false or ActiveIngestion is false).")
+		log.Printf("Failed to gather initial results: %v", err)
 	}
 
 	for {
 		select {
 		case <-hbTicker.C:
 			// Send Heartbeat
-			if a.cfg.Debug {
-				log.Println("[Debug] Sending heartbeat to backend...")
-			}
 			resp, err := a.api.Heartbeat(a.cfg.AgentID, config.Version)
 			if err != nil {
 				log.Printf("Heartbeat failed: %v", err)
 			} else {
-				log.Println("Heartbeat sent successfully")
-				if a.cfg.Debug {
-					respJSON, _ := json.Marshal(resp)
-					log.Printf("[Debug] Heartbeat response received: %s", string(respJSON))
-				}
 				if a.checkKill(resp) {
 					return nil
 				}
 				if a.syncConfiguration(resp) {
-					log.Printf("Configuration updated. Heartbeat: %ds, Collection Interval: %s", a.cfg.HeartbeatInterval, a.cfg.CollectionInterval)
+					log.Printf("Configuration updated. Heartbeat: %ds, Asset Push: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
 					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-					assetTicker.Reset(parseCollectionInterval(a.cfg.CollectionInterval))
+					assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
 				}
 			}
 
 		case <-assetTicker.C:
-			if !a.cfg.ActiveIngestion {
-				log.Println("Active ingestion is disabled. Skipping asset push.")
-				continue
-			}
 			// Gather and Send Results
-			if a.cfg.Debug {
-				log.Println("[Debug] Gathering all assets for scheduled push...")
-			}
 			results, err := a.gatherAll()
 			if err != nil {
 				log.Printf("Failed to gather results: %v", err)
 				continue
 			}
 
-			if a.cfg.Debug {
-				log.Println("[Debug] Sending scheduled asset results to backend...")
-			}
 			resp, err := a.api.SendResults(a.cfg.AgentID, results)
 			if err != nil {
 				log.Printf("Failed to send results: %v", err)
 			} else {
-				log.Println("Asset results sent successfully")
-				if a.cfg.Debug {
-					respJSON, _ := json.Marshal(resp)
-					log.Printf("[Debug] Asset results response received: %s", string(respJSON))
-				}
 				if a.checkKill(resp) {
 					return nil
 				}
 				if a.syncConfiguration(resp) {
-					log.Printf("Configuration updated from results response. Heartbeat: %ds, Collection Interval: %s", a.cfg.HeartbeatInterval, a.cfg.CollectionInterval)
+					log.Printf("Configuration updated from results response. Heartbeat: %ds, Asset Push: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
 					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
-					assetTicker.Reset(parseCollectionInterval(a.cfg.CollectionInterval))
+					assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
 				}
 			}
 
@@ -315,7 +228,6 @@ func (a *Agent) Start() error {
 
 func (a *Agent) Stop() {
 	close(a.stop)
-	a.scanManager.Stop()
 }
 
 func (a *Agent) syncConfiguration(resp *api.ResultsResponse) bool {
@@ -324,77 +236,23 @@ func (a *Agent) syncConfiguration(resp *api.ResultsResponse) bool {
 	}
 
 	changed := false
-
 	if resp.Configuration.HeartbeatInterval > 0 && resp.Configuration.HeartbeatInterval != a.cfg.HeartbeatInterval {
 		a.cfg.HeartbeatInterval = resp.Configuration.HeartbeatInterval
 		changed = true
 	}
-	if resp.Configuration.VulnScanInterval > 0 && resp.Configuration.VulnScanInterval != a.cfg.VulnScanInterval {
-		a.cfg.VulnScanInterval = resp.Configuration.VulnScanInterval
-		a.scanManager.SetScanInterval(a.cfg.VulnScanInterval)
-		changed = true
-	}
-	if resp.Configuration.CollectionInterval != "" && resp.Configuration.CollectionInterval != a.cfg.CollectionInterval {
-		a.cfg.CollectionInterval = resp.Configuration.CollectionInterval
-		changed = true
-	}
-	if resp.Configuration.ActiveIngestion != a.cfg.ActiveIngestion {
-		a.cfg.ActiveIngestion = resp.Configuration.ActiveIngestion
-		changed = true
-	}
-	if resp.Configuration.CollectOnStart != a.cfg.CollectOnStart {
-		a.cfg.CollectOnStart = resp.Configuration.CollectOnStart
-		changed = true
-	}
-	if len(resp.Configuration.CollectionCategories) > 0 && !stringSlicesEqual(resp.Configuration.CollectionCategories, a.cfg.CollectionCategories) {
-		a.cfg.CollectionCategories = resp.Configuration.CollectionCategories
-		changed = true
-	}
-	if len(resp.Configuration.ScanTargets.IncludeDirs) > 0 && (!stringSlicesEqual(resp.Configuration.ScanTargets.IncludeDirs, a.cfg.IncludeDirs) || !stringSlicesEqual(resp.Configuration.ScanTargets.ExcludeDirs, a.cfg.ExcludeDirs)) {
-		a.cfg.IncludeDirs = resp.Configuration.ScanTargets.IncludeDirs
-		a.cfg.ExcludeDirs = resp.Configuration.ScanTargets.ExcludeDirs
-		a.scanManager.UpdateTargets(a.cfg.IncludeDirs, a.cfg.ExcludeDirs)
+	if resp.Configuration.AssetPushInterval > 0 && resp.Configuration.AssetPushInterval != a.cfg.AssetPushInterval {
+		a.cfg.AssetPushInterval = resp.Configuration.AssetPushInterval
 		changed = true
 	}
 
 	if changed {
 		if err := config.SaveConfig(a.configPath, a.cfg); err != nil {
-			log.Printf("Failed to save dynamic configuration: %v", err)
-		}
-	}
-
-	// Trigger manual scan jobs if any
-	if len(resp.Configuration.ScanJobs) > 0 {
-		var jobs []vulnscan.ScanJob
-		for _, rawJob := range resp.Configuration.ScanJobs {
-			b, err := json.Marshal(rawJob)
-			if err == nil {
-				var job vulnscan.ScanJob
-				if err := json.Unmarshal(b, &job); err == nil {
-					jobs = append(jobs, job)
-				}
-			}
-		}
-		if len(jobs) > 0 {
-			a.scanManager.RunJobs(jobs)
-		}
-	}
-
-	// Trigger scheduled scans if any are pending or launched (in case of restart)
-	for _, scan := range resp.Configuration.Scans {
-		if (scan.Status == "pending" || scan.Status == "launched") && !a.triggeredScans[scan.ScanID] {
-			a.triggeredScans[scan.ScanID] = true
-			go a.executeScheduledScan(scan)
+			log.Printf("Failed to save updated configuration: %v", err)
 		}
 	}
 
 	// 2. Check for Software Updates
 	if resp.Configuration.LatestVersion != "" && resp.Configuration.LatestVersion != config.Version {
-		if a.cfg.Debug || config.Version == "dev" {
-			log.Printf("[Debug] Skipping auto-update in debug/development mode (LatestVersion: %s, CurrentVersion: %s)", resp.Configuration.LatestVersion, config.Version)
-			return changed
-		}
-
 		log.Printf("New version available: %s (current: %s). Starting auto-update...", resp.Configuration.LatestVersion, config.Version)
 		if resp.Configuration.DownloadURL == "" {
 			log.Printf("Download URL is empty. Update aborted.")
@@ -442,23 +300,10 @@ func (a *Agent) gatherAll() (map[string]interface{}, error) {
 	}
 
 	for _, m := range a.modules {
-		if !isModuleEnabled(m.Name(), a.cfg.CollectionCategories) {
-			if a.cfg.Debug {
-				log.Printf("[Debug] Skipping disabled module: %s", m.Name())
-			}
-			continue
-		}
-		if a.cfg.Debug {
-			log.Printf("[Debug] Running module: %s...", m.Name())
-		}
-		startTime := time.Now()
 		data, err := m.Gather()
 		if err != nil {
 			log.Printf("Module %s failed: %v", m.Name(), err)
 			continue
-		}
-		if a.cfg.Debug {
-			log.Printf("[Debug] Module %s completed in %v", m.Name(), time.Since(startTime))
 		}
 
 		// Special handling for modules that return multiple top-level keys
@@ -474,175 +319,4 @@ func (a *Agent) gatherAll() (map[string]interface{}, error) {
 	}
 
 	return payload, nil
-}
-
-// stringSlicesEqual checks if two string slices have identical contents.
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func isModuleEnabled(moduleName string, categories []string) bool {
-	if len(categories) == 0 {
-		return true
-	}
-
-	var category string
-	switch moduleName {
-	case "packages":
-		category = "installed_packages"
-	case "processes":
-		category = "running_processes"
-	case "hardware", "devices":
-		category = "host_hardware"
-	case "network":
-		category = "network"
-	case "users", "security":
-		category = "users_and_access"
-	case "host_os", "host":
-		return true
-	default:
-		return true
-	}
-
-	for _, cat := range categories {
-		if cat == category {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *Agent) executeScheduledScan(scan api.ScanJobConfig) {
-	log.Printf("Executing scheduled scan %s", scan.ScanID)
-	
-	if _, err := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "launched", ""); err != nil {
-		log.Printf("Failed to report scan status as launched: %v", err)
-	}
-
-	plugins := a.scanManager.GetPlugins()
-	if len(plugins) == 0 {
-		log.Printf("No plugins registered for scheduled scan %s", scan.ScanID)
-		_, err := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "failed", "No plugins registered")
-		if err != nil {
-			log.Printf("Failed to report scan failure: %v", err)
-		}
-		return
-	}
-
-	targets := scan.Targets
-	if len(targets) == 0 {
-		targets = a.cfg.IncludeDirs
-	}
-	if len(targets) == 0 {
-		if runtime.GOOS == "windows" {
-			targets = []string{"C:\\"}
-		} else {
-			targets = []string{"/"}
-		}
-	}
-
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var allFindings []vulnscan.NormalizedFinding
-	var scanErrors []string
-
-	for name, plugin := range plugins {
-		wg.Add(1)
-		go func(toolName string, p vulnscan.ScannerPlugin) {
-			defer wg.Done()
-			
-			// Copy options to avoid concurrent map access issues
-			options := make(map[string]string)
-			for k, v := range scan.Options {
-				options[k] = v
-			}
-			if _, ok := options["excludes"]; !ok && len(a.cfg.ExcludeDirs) > 0 {
-				options["excludes"] = strings.Join(a.cfg.ExcludeDirs, ",")
-			}
-			// If protocol or tags are missing, provide default values
-			if _, ok := options["protocol"]; !ok {
-				options["protocol"] = "file"
-			}
-			if _, ok := options["tags"]; !ok {
-				options["tags"] = "secrets,keys,tokens,credentials,misconfiguration"
-			}
-
-			job := vulnscan.ScanJob{
-				ID:      scan.ScanID + "-" + toolName,
-				Tool:    toolName,
-				Targets: targets,
-				Options: options,
-			}
-
-			log.Printf("Running plugin %s for scheduled scan %s", toolName, scan.ScanID)
-			ctx := context.Background()
-			result, err := p.Execute(ctx, job)
-			
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				log.Printf("Plugin %s failed for scheduled scan %s: %v", toolName, scan.ScanID, err)
-				scanErrors = append(scanErrors, fmt.Sprintf("%s: %v", toolName, err))
-				return
-			}
-			
-			log.Printf("Plugin %s completed for scheduled scan %s with %d findings", toolName, scan.ScanID, len(result.Findings))
-			allFindings = append(allFindings, result.Findings...)
-		}(name, plugin)
-	}
-
-	wg.Wait()
-
-	if len(allFindings) > 0 {
-		if _, sErr := a.api.SendVulnerabilities(a.cfg.AgentID, allFindings); sErr != nil {
-			log.Printf("Failed to send vulnerabilities: %v", sErr)
-		}
-	}
-
-	// Update final status
-	if len(scanErrors) == len(plugins) {
-		// All plugins failed
-		errMsg := strings.Join(scanErrors, "; ")
-		_, rErr := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "failed", errMsg)
-		if rErr != nil {
-			log.Printf("Failed to report scan failure: %v", rErr)
-		}
-	} else {
-		// At least one plugin succeeded
-		var statusComment string
-		if len(scanErrors) > 0 {
-			statusComment = fmt.Sprintf("Completed with partial errors: %s", strings.Join(scanErrors, "; "))
-		}
-		_, rErr := a.api.UpdateScanStatus(a.cfg.AgentID, scan.ScanID, "completed", statusComment)
-		if rErr != nil {
-			log.Printf("Failed to report scan completion: %v", rErr)
-		}
-	}
-}
-
-func parseCollectionInterval(intervalStr string) time.Duration {
-	if len(intervalStr) < 2 {
-		log.Printf("Invalid collection_interval '%s', falling back to 30m", intervalStr)
-		return 30 * time.Minute
-	}
-	unit := intervalStr[len(intervalStr)-1:]
-	if unit != "s" && unit != "m" && unit != "h" {
-		log.Printf("Unsupported collection_interval unit in '%s' (only s, m, h are supported), falling back to 30m", intervalStr)
-		return 30 * time.Minute
-	}
-
-	d, err := time.ParseDuration(intervalStr)
-	if err != nil {
-		log.Printf("Failed to parse collection_interval '%s', falling back to 30m: %v", intervalStr, err)
-		return 30 * time.Minute
-	}
-	return d
 }
