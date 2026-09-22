@@ -42,6 +42,14 @@ func (m *ScanManager) GetPlugin(name string) (ScannerPlugin, bool) {
 	return plugin, ok
 }
 
+func (m *ScanManager) GetPlugins() map[string]ScannerPlugin {
+	copyMap := make(map[string]ScannerPlugin)
+	for k, v := range m.plugins {
+		copyMap[k] = v
+	}
+	return copyMap
+}
+
 func (m *ScanManager) UpdateTargets(includes []string, excludes []string) {
 	m.includes = includes
 	m.excludes = excludes

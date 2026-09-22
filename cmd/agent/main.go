@@ -79,6 +79,7 @@ func main() {
 	configPath := flag.String("config", config.GetDefaultConfigPath(), "Path to configuration file")
 	foreground := flag.Bool("f", false, "Run in foreground (interactive mode)")
 	flag.BoolVar(foreground, "foreground", false, "Run in foreground (interactive mode)")
+	debug := flag.Bool("debug", false, "Enable verbose debug logging")
 	flag.Parse()
 
 	// Load configuration
@@ -89,6 +90,14 @@ func main() {
 		fmt.Printf("Please ensure config exists at %s or specify path with -config\n", *configPath)
 		os.Exit(1)
 	}
+
+	if *debug {
+		cfg.Debug = true
+	}
+
+	log.Printf("Successfully loaded config from %s: BackendURL=%s, APIKey=%s, AgentID=%s, HeartbeatInterval=%ds, CollectionInterval=%s, VulnScanInterval=%ds",
+		*configPath, cfg.BackendURL, cfg.APIKey, cfg.AgentID, cfg.HeartbeatInterval, cfg.CollectionInterval, cfg.VulnScanInterval)
+
 
 	// AutoHandle will install/register if not installed, or run if already installed.
 	if err := service.AutoHandle(cfg, *configPath, *foreground); err != nil {

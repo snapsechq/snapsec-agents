@@ -97,7 +97,6 @@ type ScanJobConfig struct {
 type AgentConfiguration struct {
 	Kill                 bool                   `json:"kill"`
 	HeartbeatInterval    int                    `json:"heartbeat_interval"` // in seconds
-	AssetPushInterval    int                    `json:"asset_push_interval"` // in seconds
 	VulnScanInterval     int                    `json:"vuln_scan_interval,omitempty"` // in seconds
 	ScanJobs             []interface{}          `json:"scan_jobs,omitempty"`
 	LatestVersion        string                 `json:"latest_version"`

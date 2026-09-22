@@ -14,7 +14,6 @@ type Config struct {
 	APIKey               string   `yaml:"api_key"`
 	AgentID              string   `yaml:"agent_id,omitempty"`
 	HeartbeatInterval    int      `yaml:"heartbeat_interval"` // in seconds
-	AssetPushInterval    int      `yaml:"asset_push_interval"` // in seconds
 	VulnScanInterval     int      `yaml:"vuln_scan_interval"` // in seconds
 	IncludeDirs          []string `yaml:"include_dirs,omitempty"`
 	ExcludeDirs          []string `yaml:"exclude_dirs,omitempty"`
@@ -22,6 +21,8 @@ type Config struct {
 	CollectionCategories []string `yaml:"collection_categories,omitempty"`
 	CollectionInterval   string   `yaml:"collection_interval,omitempty"`
 	CollectOnStart       bool     `yaml:"collect_on_start"`
+	Debug                bool     `yaml:"debug,omitempty"`
+	ExplicitKeys         map[string]bool `yaml:"-"`
 }
 
 func GetDefaultConfigPath() string {
@@ -37,21 +38,27 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	var rawMap map[string]interface{}
+	if err := yaml.Unmarshal(data, &rawMap); err != nil {
+		return nil, err
+	}
+
 	cfg := Config{
 		ActiveIngestion:    true,
 		CollectOnStart:     true,
 		CollectionInterval: "30m",
+		ExplicitKeys:       make(map[string]bool),
 	}
+	for k := range rawMap {
+		cfg.ExplicitKeys[k] = true
+	}
+
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
 
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = 900 // Default to 15 minutes
-	}
-
-	if cfg.AssetPushInterval == 0 {
-		cfg.AssetPushInterval = 1800 // Default to 30 minutes
 	}
 
 	if cfg.VulnScanInterval == 0 {
