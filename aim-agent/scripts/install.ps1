@@ -10,7 +10,7 @@ $AGENT_VERSION = "{{AGENT_VERSION}}"
 # ----------------------------------
 
 $ARCH = if ($env:PROCESSOR_ARCHITECTURE -eq "AMD64") { "amd64" } else { "386" }
-$RELEASE_BINARY_NAME = "agent"
+$RELEASE_BINARY_NAME = "snapsec-sensor"
 $LOCAL_BINARY_NAME = "snapsec-sensor.exe"
 $INSTALL_DIR = "C:\Program Files\SnapsecSensor"
 $CONFIG_DIR = "C:\ProgramData\snapsec.d"

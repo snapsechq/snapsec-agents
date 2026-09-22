@@ -21,7 +21,7 @@ elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
     ARCH="arm64"
 fi
 
-RELEASE_BINARY_NAME="agent"
+RELEASE_BINARY_NAME="snapsec-sensor"
 LOCAL_BINARY_NAME="snapsec-sensor"
 CONFIG_DIR="/etc/snapsec.d"
 CONFIG_PATH="${CONFIG_DIR}/snapsec-sensor.yaml"
