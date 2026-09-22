@@ -1,0 +1,19 @@
+# Snapsec Agent Configuration
+
+# URL of the Snapsec backend
+backend_url: "http://localhost:8080"
+
+# API Key for authentication
+api_key: "your-api-key-here"
+
+# Interval in seconds for heartbeat
+heartbeat_interval: 120
+
+# Interval in seconds for asset reporting
+asset_push_interval: 1800
+
+# Directories to explicitly include in vulnerability scans
+include_dirs: []
+
+# Directories/paths to exclude from vulnerability scans
+exclude_dirs: []
