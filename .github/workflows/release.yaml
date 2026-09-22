@@ -27,6 +27,9 @@ jobs:
           VERSION=$(echo ${{ github.ref_name }} | awk -F'/' '{print $2}')
           echo "AGENT=$AGENT" >> $GITHUB_ENV
           echo "GORELEASER_CURRENT_TAG=$VERSION" >> $GITHUB_ENV
+          
+          # Create a local tag so GoReleaser's commit validation passes
+          git tag $VERSION
 
       - uses: goreleaser/goreleaser-action@v6
         with:
