@@ -33,8 +33,8 @@ func (p *program) Stop(s service.Service) error {
 
 func newService(cfg *config.Config, configPath string) (service.Service, error) {
 	svcConfig := &service.Config{
-		Name:        "snapsec-agent",
-		DisplayName: "Snapsec Agent",
+		Name:        "snapsec-detector",
+		DisplayName: "Snapsec Detector",
 		Description: "Monitors system assets and sends data to Snapsec backend.",
 	}
 
@@ -97,7 +97,7 @@ func AutoHandle(cfg *config.Config, configPath string, foreground bool) error {
 			if err := s.Restart(); err != nil {
 				return fmt.Errorf("failed to restart service: %w", err)
 			}
-			log.Println("Snapsec Agent service restarted successfully.")
+			log.Println("Snapsec Detector service restarted successfully.")
 		} else {
 			log.Println("Starting agent service...")
 			if err := s.Start(); err != nil {
@@ -106,7 +106,7 @@ func AutoHandle(cfg *config.Config, configPath string, foreground bool) error {
 					return fmt.Errorf("failed to start agent service: %w", err)
 				}
 			}
-			log.Println("Snapsec Agent service started successfully.")
+			log.Println("Snapsec Detector service started successfully.")
 		}
 
 		log.Println("Installation/Update complete. Agent is running in the background.")

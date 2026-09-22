@@ -27,9 +27,9 @@ type Config struct {
 
 func GetDefaultConfigPath() string {
 	if runtime.GOOS == "windows" {
-		return "C:\\ProgramData\\snapsec-agent\\config.yaml"
+		return "C:\\ProgramData\\snapsec.d\\snapsec-detector.yaml"
 	}
-	return "/etc/snapsec-agent.yaml"
+	return "/etc/snapsec.d/snapsec-detector.yaml"
 }
 
 func LoadConfig(path string) (*Config, error) {
