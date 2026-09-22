@@ -20,11 +20,13 @@ jobs:
         with:
           go-version: "1.24"
 
-      - name: Extract agent name
+      - name: Extract agent name and version
         id: extract
         run: |
           AGENT=$(echo ${{ github.ref_name }} | awk -F'/' '{print $1}')
+          VERSION=$(echo ${{ github.ref_name }} | awk -F'/' '{print $2}')
           echo "AGENT=$AGENT" >> $GITHUB_ENV
+          echo "GORELEASER_CURRENT_TAG=$VERSION" >> $GITHUB_ENV
 
       - uses: goreleaser/goreleaser-action@v6
         with:
@@ -32,3 +34,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ env.GORELEASER_CURRENT_TAG }}

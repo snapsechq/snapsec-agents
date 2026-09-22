@@ -1,8 +1,5 @@
 version: 2
 
-monorepo:
-  tag_prefix: "aim-agent/"
-
 project_name: agent
 
 before:
