@@ -85,12 +85,27 @@ func (c *Client) Heartbeat(agentID, version string) (*ResultsResponse, error) {
 	return &res, nil
 }
 
+type ScanTargets struct {
+	IncludeDirs []string `json:"includeDirs,omitempty"`
+	ExcludeDirs []string `json:"excludeDirs,omitempty"`
+}
+
+type ScanAgentConfig struct {
+	Enabled     bool        `json:"enabled"`
+	Version     string      `json:"version"`
+	DownloadURL string      `json:"download_url"`
+	Interval    int         `json:"interval"` // in seconds
+	Targets     ScanTargets `json:"targets,omitempty"`
+	BackendURL  string      `json:"backend_url,omitempty"`
+}
+
 type AgentConfiguration struct {
-	Kill              bool   `json:"kill"`
-	HeartbeatInterval int    `json:"heartbeat_interval"` // in seconds
-	AssetPushInterval int    `json:"asset_push_interval"` // in seconds
-	LatestVersion     string `json:"latest_version"`
-	DownloadURL       string `json:"download_url"`
+	Kill              bool             `json:"kill"`
+	HeartbeatInterval int              `json:"heartbeat_interval"` // in seconds
+	AssetPushInterval int              `json:"asset_push_interval"` // in seconds
+	LatestVersion     string           `json:"latest_version"`
+	DownloadURL       string           `json:"download_url"`
+	ScanAgent         *ScanAgentConfig `json:"scan_agent,omitempty"`
 }
 
 type ResultsResponse struct {

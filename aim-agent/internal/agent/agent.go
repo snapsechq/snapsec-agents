@@ -20,16 +20,20 @@ import (
 	"time"
 	"runtime"
 	"snapsec-agent/internal/updater"
+	"snapsec-agent/internal/detector"
 )
 
 type Agent struct {
-	cfg         *config.Config
-	configPath  string
-	api         *api.Client
-	modules     []modules.Module
-	stop        chan struct{}
-	KillHandler func()
+	cfg          *config.Config
+	configPath   string
+	api          *api.Client
+	modules      []modules.Module
+	stop         chan struct{}
+	KillHandler  func()
 	UpdateHandler func() error
+	detectorMgr  *detector.Manager
+	scanInterval int
+	scanEnabled  bool
 }
 
 func NewAgent(cfg *config.Config, configPath string) *Agent {
@@ -49,7 +53,9 @@ func NewAgent(cfg *config.Config, configPath string) *Agent {
 			&security.SecurityModule{},
 			&classification.ClassificationModule{},
 		},
-		stop: make(chan struct{}),
+		stop:         make(chan struct{}),
+		detectorMgr:  detector.NewManager(configPath),
+		scanInterval: 86400,
 	}
 }
 
@@ -140,13 +146,15 @@ func (a *Agent) Start() error {
 		}
 	}
 
-	// 2. Start Heartbeat and Results Reporting Loops
+	// 2. Start Heartbeat, Results Reporting, and Vulnerability Scan Loops
 	hbTicker := time.NewTicker(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
 	assetTicker := time.NewTicker(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+	scanTicker := time.NewTicker(time.Duration(a.scanInterval) * time.Second)
 	defer hbTicker.Stop()
 	defer assetTicker.Stop()
+	defer scanTicker.Stop()
 
-	log.Printf("Heartbeat interval: %ds, Asset push interval: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
+	log.Printf("Heartbeat interval: %ds, Asset push interval: %ds, Scan interval: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval, a.scanInterval)
 
 	// 3. Initial Heartbeat to sync config and check for updates immediately
 	if resp, err := a.api.Heartbeat(a.cfg.AgentID, config.Version); err == nil {
@@ -157,6 +165,7 @@ func (a *Agent) Start() error {
 			// Intervals might have changed, restart tickers
 			hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
 			assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+			scanTicker.Reset(time.Duration(a.scanInterval) * time.Second)
 		}
 	}
 
@@ -173,6 +182,7 @@ func (a *Agent) Start() error {
 			if a.syncConfiguration(resp) {
 				hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
 				assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+				scanTicker.Reset(time.Duration(a.scanInterval) * time.Second)
 			}
 		}
 	} else {
@@ -191,9 +201,10 @@ func (a *Agent) Start() error {
 					return nil
 				}
 				if a.syncConfiguration(resp) {
-					log.Printf("Configuration updated. Heartbeat: %ds, Asset Push: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
+					log.Printf("Configuration updated. Heartbeat: %ds, Asset Push: %ds, Scan: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval, a.scanInterval)
 					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
 					assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+					scanTicker.Reset(time.Duration(a.scanInterval) * time.Second)
 				}
 			}
 
@@ -213,10 +224,21 @@ func (a *Agent) Start() error {
 					return nil
 				}
 				if a.syncConfiguration(resp) {
-					log.Printf("Configuration updated from results response. Heartbeat: %ds, Asset Push: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval)
+					log.Printf("Configuration updated from results response. Heartbeat: %ds, Asset Push: %ds, Scan: %ds", a.cfg.HeartbeatInterval, a.cfg.AssetPushInterval, a.scanInterval)
 					hbTicker.Reset(time.Duration(a.cfg.HeartbeatInterval) * time.Second)
 					assetTicker.Reset(time.Duration(a.cfg.AssetPushInterval) * time.Second)
+					scanTicker.Reset(time.Duration(a.scanInterval) * time.Second)
 				}
+			}
+
+		case <-scanTicker.C:
+			if a.scanEnabled && a.detectorMgr.IsInstalled() {
+				log.Println("[Agent] Triggering scheduled vulnerability scan...")
+				go func() {
+					if err := a.detectorMgr.RunScan(); err != nil {
+						log.Printf("[Agent] Scheduled vulnerability scan failed: %v", err)
+					}
+				}()
 			}
 
 		case <-a.stop:
@@ -271,6 +293,33 @@ func (a *Agent) syncConfiguration(resp *api.ResultsResponse) bool {
 			}
 		} else {
 			log.Println("UpdateHandler not set. Manual restart required.")
+		}
+	}
+
+	// 3. Scan Agent (snapsec-detector) Pulling and Configuration
+	if sc := resp.Configuration.ScanAgent; sc != nil {
+		a.scanEnabled = sc.Enabled
+		if sc.Interval > 0 && sc.Interval != a.scanInterval {
+			a.scanInterval = sc.Interval
+			changed = true
+		}
+
+		if sc.Enabled {
+			backendURL := sc.BackendURL
+			if backendURL == "" {
+				backendURL = a.cfg.BackendURL
+			}
+			if err := a.detectorMgr.SyncConfig(backendURL, a.cfg.APIKey, a.cfg.AgentID, sc.Targets, a.scanInterval); err != nil {
+				log.Printf("[Agent] Failed to sync detector config: %v", err)
+			}
+
+			if sc.DownloadURL != "" {
+				go func(dlURL, ver string) {
+					if err := a.detectorMgr.EnsureBinary(dlURL, ver); err != nil {
+						log.Printf("[Agent] Failed to pull scan agent binary: %v", err)
+					}
+				}(sc.DownloadURL, sc.Version)
+			}
 		}
 	}
 
