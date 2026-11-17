@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Snapsec Agent Installation Script (Linux/macOS)
+# Snapsec Sensor Installation Script (Linux/macOS)
 # This script is populated by the backend with organization-specific parameters.
 
 set -e
@@ -28,13 +28,31 @@ fi
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 
-if [ "$ARCH" = "x86_64" ]; then
-    ARCH="amd64"
-elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    ARCH="arm64"
-elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i686" ]; then
-    ARCH="386"
-fi
+case "$OS" in
+    linux)
+        OS="linux"
+        ;;
+    darwin)
+        OS="darwin"
+        ;;
+    *)
+        echo "Error: Unsupported operating system: ${OS}. Only Linux and macOS (Darwin) are supported." >&2
+        exit 1
+        ;;
+esac
+
+case "$ARCH" in
+    x86_64|amd64)
+        ARCH="amd64"
+        ;;
+    aarch64|arm64)
+        ARCH="arm64"
+        ;;
+    *)
+        echo "Error: Unsupported architecture: ${ARCH}. Only amd64 and arm64 are supported." >&2
+        exit 1
+        ;;
+esac
 
 RELEASE_BINARY_NAME="snapsec-sensor"
 LOCAL_BINARY_NAME="snapsec-sensor"
@@ -49,16 +67,41 @@ echo "============================================================"
 echo " Installing Snapsec Sensor v${AGENT_VERSION} for ${OS} (${ARCH})"
 echo "============================================================"
 
+# Stop running service if present (to avoid executable busy errors during replacement)
+if [ "$OS" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet snapsec-sensor 2>/dev/null; then
+        echo "Stopping active snapsec-sensor service for update..."
+        ${SUDO} systemctl stop snapsec-sensor || true
+    fi
+elif [ "$OS" = "darwin" ]; then
+    if launchctl list snapsec-sensor >/dev/null 2>&1; then
+        echo "Stopping active snapsec-sensor service for update..."
+        ${SUDO} launchctl stop snapsec-sensor || true
+    fi
+fi
+
 # 1. Create Directories and Configuration File
 echo "[1/3] Writing sensor configuration to ${CONFIG_PATH}..."
 ${SUDO} mkdir -p "${CONFIG_DIR}"
 ${SUDO} mkdir -p "${INSTALL_DIR}"
 
-cat <<EOF | ${SUDO} tee "${CONFIG_PATH}" > /dev/null
-agent:
+# Preserve existing agent ID if config already exists
+EXISTING_ID=""
+if [ -f "${CONFIG_PATH}" ]; then
+    EXISTING_ID=$(grep -E '^[[:space:]]*id:' "${CONFIG_PATH}" 2>/dev/null | head -n 1 | awk '{print $2}' | tr -d '"'\''')
+fi
+
+CONFIG_CONTENT="agent:
   enabled: true
-  version: "${AGENT_VERSION}"
-  update_channel: stable
+  version: \"${AGENT_VERSION}\"
+  update_channel: stable"
+
+if [ -n "${EXISTING_ID}" ]; then
+    CONFIG_CONTENT="${CONFIG_CONTENT}
+  id: \"${EXISTING_ID}\""
+fi
+
+CONFIG_CONTENT="${CONFIG_CONTENT}
 
 inventory:
   enabled: true
@@ -69,26 +112,36 @@ vulnerability_scanning:
   interval: 3600
 
 communication:
-  backend_url: "${BACKEND_URL}"
-  asset_upstream: "${ASSET_UPSTREAM}"
-  issues_upstream: "${ISSUES_UPSTREAM}"
-  api_key: "${API_KEY}"
-  heartbeat_interval: 60
-EOF
+  backend_url: \"${BACKEND_URL}\"
+  asset_upstream: \"${ASSET_UPSTREAM}\"
+  issues_upstream: \"${ISSUES_UPSTREAM}\"
+  api_key: \"${API_KEY}\"
+  heartbeat_interval: 60"
 
+echo "${CONFIG_CONTENT}" | ${SUDO} tee "${CONFIG_PATH}" > /dev/null
 ${SUDO} chmod 600 "${CONFIG_PATH}"
 
 # 2. Download Binary
 echo "[2/3] Downloading sensor binary from ${DOWNLOAD_URL}..."
-${SUDO} curl -L -f -sS "${DOWNLOAD_URL}" -o "${INSTALL_DIR}/${LOCAL_BINARY_NAME}"
-${SUDO} chmod +x "${INSTALL_DIR}/${LOCAL_BINARY_NAME}"
+TMP_BIN="${INSTALL_DIR}/${LOCAL_BINARY_NAME}.tmp.$$"
+${SUDO} curl -L -f -sS "${DOWNLOAD_URL}" -o "${TMP_BIN}"
+${SUDO} chmod +x "${TMP_BIN}"
+${SUDO} mv -f "${TMP_BIN}" "${INSTALL_DIR}/${LOCAL_BINARY_NAME}"
 
 # 3. Run Sensor (Performs registration, updates agent.id, installs system service)
 echo "[3/3] Initializing sensor registration and service installation..."
 ${SUDO} "${INSTALL_DIR}/${LOCAL_BINARY_NAME}"
 
-echo "============================================================"
-echo " Snapsec Agent installed and started successfully!"
-echo " Service Status: ${SUDO} systemctl status snapsec-sensor"
-echo " Live Logs:      ${SUDO} journalctl -u snapsec-sensor -f"
-echo "============================================================"
+if [ "$OS" = "darwin" ]; then
+    echo "============================================================"
+    echo " Snapsec Agent installed and started successfully!"
+    echo " Service Status: ${SUDO} launchctl list | grep snapsec-sensor"
+    echo " Live Logs:      ${SUDO} tail -f /var/log/snapsec-sensor*.log"
+    echo "============================================================"
+else
+    echo "============================================================"
+    echo " Snapsec Agent installed and started successfully!"
+    echo " Service Status: ${SUDO} systemctl status snapsec-sensor"
+    echo " Live Logs:      ${SUDO} journalctl -u snapsec-sensor -f"
+    echo "============================================================"
+fi
