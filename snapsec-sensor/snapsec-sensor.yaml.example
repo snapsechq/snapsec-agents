@@ -1,0 +1,34 @@
+# Snapsec Sensor Configuration
+# Default paths:
+#   Linux/macOS: /etc/snapsec.d/snapsec-sensor.yaml
+#   Windows:     C:\ProgramData\snapsec.d\snapsec-sensor.yaml
+
+agent:
+  enabled: true
+  version: "3.2.6"
+  update_channel: stable
+  # id: "automatically-populated-on-registration"
+
+inventory:
+  enabled: true
+  # Interval in seconds to push full system inventory data to asset_upstream (default: 300)
+  interval: 300
+
+vulnerability_scanning:
+  # Vulnerability scanning is disabled by default and automatically activated
+  # upon receiving valid scanning configuration from issues_upstream heartbeat.
+  enabled: false
+  # Interval in seconds between host security audits (default: 3600)
+  interval: 3600
+
+communication:
+  # Base URL of the Snapsec backend instance (e.g. https://api.snapsec.co)
+  backend_url: "https://your-backend.com"
+  # Upstream endpoint for asset discovery & system inventory telemetry
+  asset_upstream: "/asset-inventory/api/v1/agents"
+  # Upstream endpoint for vulnerability findings, host audits, and scanning heartbeats
+  issues_upstream: "/autopentest/api/v1/agents"
+  # Organization API key generated from the Snapsec Dashboard
+  api_key: "your-api-key-here"
+  # Heartbeat interval in seconds (default: 60)
+  heartbeat_interval: 60
