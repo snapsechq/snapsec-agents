@@ -54,7 +54,7 @@ The configuration file is expected at:
 ```yaml
 agent:
   enabled: true
-  version: "3.2.6"
+  version: "4.0.2"
   update_channel: stable
   id: "assigned-by-backend" # Automatically populated after initial registration
 

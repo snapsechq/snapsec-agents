@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var Version = "3.2.6" // Overridden by ldflags during build
+var Version = "4.0.2" // Overridden by ldflags during build
 
 type AgentSection struct {
 	ID            string `yaml:"id,omitempty"`
