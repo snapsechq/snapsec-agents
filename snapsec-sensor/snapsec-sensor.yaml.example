@@ -5,7 +5,7 @@
 
 agent:
   enabled: true
-  version: "4.0.3"
+  version: "4.0.4"
   update_channel: stable
   # id: "automatically-populated-on-registration"
 
