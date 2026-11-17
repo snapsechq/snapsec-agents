@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "*-agent/v*"
+      - "*/v*"
 
 permissions:
   contents: write
