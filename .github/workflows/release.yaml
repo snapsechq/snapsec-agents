@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "*/v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. snapsec-sensor/v4.0.1)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,13 +29,25 @@ jobs:
       - name: Extract agent name and version
         id: extract
         run: |
-          AGENT=$(echo ${{ github.ref_name }} | awk -F'/' '{print $1}')
-          VERSION=$(echo ${{ github.ref_name }} | awk -F'/' '{print $2}')
+          REF="${{ inputs.tag || github.ref_name }}"
+          AGENT="${REF%%/*}"
+          VERSION="${REF#*/}"
+
+          if [ -z "$AGENT" ] || [ -z "$VERSION" ] || [ "$AGENT" = "$VERSION" ]; then
+            echo "::error::Tag '$REF' does not match pattern '<agent>/v<version>'"
+            exit 1
+          fi
+
+          if [ ! -d "$AGENT" ]; then
+            echo "::error::Agent directory '$AGENT' does not exist."
+            exit 1
+          fi
+
           echo "AGENT=$AGENT" >> $GITHUB_ENV
           echo "GORELEASER_CURRENT_TAG=$VERSION" >> $GITHUB_ENV
-          
-          # Create a local tag so GoReleaser's commit validation passes
-          git tag $VERSION
+
+          # Force create/update local tag so GoReleaser's commit validation passes
+          git tag -f "$VERSION"
 
       - uses: goreleaser/goreleaser-action@v6
         with:

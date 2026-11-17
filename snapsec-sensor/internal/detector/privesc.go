@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -203,7 +202,7 @@ func (d *PrivEscDetector) checkSUIDBinaries() []Finding {
 			mode := info.Mode()
 			// Check if SUID bit is set
 			if mode&os.ModeSetuid != 0 {
-				stat, ok := info.Sys().(*syscall.Stat_t)
+				uid, ok := getFileOwnerUID(info)
 				if !ok {
 					continue
 				}
@@ -228,7 +227,7 @@ func (d *PrivEscDetector) checkSUIDBinaries() []Finding {
 				}
 
 				// 2. Dangerous GTFOBins binaries owned by root with SUID set
-				if stat.Uid == 0 {
+				if uid == 0 {
 					baseName := entry.Name()
 					if desc, exists := gtfobins[baseName]; exists {
 						findings = append(findings, Finding{
